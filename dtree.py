@@ -2,6 +2,7 @@
 
 import math
 import numpy as np
+import random
 
 
 #helper function to bucket continuous variables into x bins
@@ -27,6 +28,10 @@ def toCategorical(data, numClasses):
 	return justCategorical
 
 
+#returns the most common label of the passed data
+def mostCommonLabel(data):
+	return max(set(list(data)), key = list(data).count)
+
 
 #is the object which holds the user facing functionality: fit() and predict()
 class Dtree:
@@ -50,11 +55,9 @@ class Dtree:
 		return(predValues)
 
 
-
 #nodes calculate how to split data when training and hold that information,
 #allowing for nodes to split data while making predictions
 class Node:
-
 	def __init__(self, nodeX, nodeY, maxDepth, depth, nodeType = None, splittingFeature = None, splittingFeatureClass = None, leafReturn = None):
 		self.left = None
 		self.right = None
@@ -77,14 +80,10 @@ class Node:
 			else:
 				return(self.right.nodePred(data))
 
-	#returns the most common label of the passed data
-	def mostCommonLabel(self, data):
-		return max(set(list(data)), key = list(data).count)
 
 	#calculate gini for a given feature
 	#returns the average gini for a given feature
 	def gini(self, feature, labels):
-		byClassCounts = {}
 		length = len(labels)	
 		buildCount = 0
 		gini = 0
@@ -117,30 +116,31 @@ class Node:
 	def calcSplit(self):
 		numCols = self.nodeX.shape[1]
 		bestGini = 2
-		bestAtt = -1
+		bestAttribute = -1
 		currGini = 2
 		splitOn = None
-		allSame = False
+		allSameGini = False
 		allGini = []
 
 		for col in range(numCols):
 			currGini = self.gini(list(self.nodeX[:,col]), list(self.nodeY))
 			allGini.append(currGini[0])
 			if currGini[0] < bestGini:
-				bestAtt = col
+				bestAttribute = col
 				bestGini = currGini[0]
 				splitOn = currGini[1]
 
 		if len(set(allGini)) == 1:
-			allSame = True
-		return bestAtt, splitOn, allSame
+			allSameGini = True
+		return bestAttribute, splitOn, allSameGini
+
 
 	#recursively create nodes until we reach a leaf
 	def buildTree(self):
 		#if we are at max depth, return the most common label
 		if self.depth == self.maxDepth:
 			self.nodeType = "leaf"
-			self.leafReturn = self.mostCommonLabel(self.nodeY)
+			self.leafReturn = mostCommonLabel(self.nodeY)
 			return()
 
 		#if every label is the same, return the label
@@ -154,7 +154,7 @@ class Node:
 
 		if splitInfo[2] == True:
 			self.nodeType = "leaf"
-			self.leafReturn = self.mostCommonLabel(self.nodeY)
+			self.leafReturn = mostCommonLabel(self.nodeY)
 			return()				
 
 		self.nodeType = "decision"
@@ -168,3 +168,54 @@ class Node:
 		self.right = Node(nodeX = rightX, nodeY = rightY, depth = self.depth + 1, maxDepth = self.maxDepth)
 		self.left.buildTree()
 		self.right.buildTree()
+
+
+#uses above decision tree to implement a random forest
+class RandomForest:
+	def __init__(self, nTrees = 50, maxDepth = None, bootstrap = True):
+		self.nTrees = nTrees
+		self.maxDepth = maxDepth
+		self.bootstrap = bootstrap
+		self.treeList = None
+
+	#train the random forest on provided data,targets
+	def fit(self, data, labels):
+		random.seed(a = 10)
+		numFeatures = data.shape[1]
+		numObservations = data.shape[0]
+		featuresPerTree = math.ceil(math.sqrt(numFeatures))
+		self.treeList = [Dtree(maxDepth = self.maxDepth) for i in range(self.nTrees)]
+
+		for tree in self.treeList:
+			#select a random subset of features to build our tree using			
+			usedFeatures = random.sample(range(numFeatures), featuresPerTree)
+			usedData = np.zeros(data.shape)
+			for i in range(numFeatures):
+				if i in usedFeatures:
+					usedData[:,i] = data[:,i]
+
+			#perform bootstrapping on our data
+			if self.bootstrap == True:
+				bootstrapSample = random.choices(range(numObservations),k=numObservations)
+				bootstrapData = usedData[bootstrapSample,:]
+				bootstrapLabels = labels[bootstrapSample]
+				#if bootstrapped, fit on bootstrapped data
+				tree.fit(bootstrapData, bootstrapLabels)
+
+			#if not bootstrapped, fit without bootstrapped data
+			elif self.bootstrap == False:
+				tree.fit(usedData, labels)
+
+				
+	#use the most common prediction from all of our trees as the true prediction
+	def predict(self, data):
+		finalPredictions = []
+		allTreePredictions = []
+		for tree in self.treeList:
+			allTreePredictions.append(tree.predict(data))
+		for i in np.array(allTreePredictions).T:
+			finalPredictions.append(mostCommonLabel(i))
+		return(finalPredictions)
+
+
+
